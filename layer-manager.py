@@ -194,6 +194,105 @@ def delete_selected(image):
     image.undo_group_end()
     Gimp.displays_flush()
 
+def add_layers(image, active, count, prefix, above, counter):
+    """Add count new layers relative to active layer.
+    - active is a group: add as children inside the group
+    - active is a layer in a group: add as siblings in that group
+    - active is a top-level layer: add at root level
+    above=True inserts above/before, above=False inserts below/after.
+    Returns updated counter."""
+    if not active or count < 1:
+        return counter
+
+    # Determine parent group and insertion position
+    parent = active.get_parent() if hasattr(active, 'get_parent') else None
+
+    if is_group(active):
+        # Insert as children inside the group
+        insert_parent = active
+        position = 0 if above else -1  # 0=top of group, -1=bottom
+    elif parent and isinstance(parent, Gimp.GroupLayer):
+        # Sibling of active layer inside its parent group
+        insert_parent = parent
+        siblings = list(parent.get_children())
+        try:
+            idx = next(i for i, c in enumerate(siblings) if c.get_id() == active.get_id())
+        except StopIteration:
+            idx = 0
+        position = idx if above else idx + 1
+    else:
+        # Root level
+        insert_parent = None
+        top = image.get_layers()
+        try:
+            idx = next(i for i, l in enumerate(top) if l.get_id() == active.get_id())
+        except StopIteration:
+            idx = 0
+        position = idx if above else idx + 1
+
+    image.undo_group_start()
+    width  = image.get_width()
+    height = image.get_height()
+    for n in range(count):
+        name = f"{prefix} {counter}"
+        counter += 1
+        layer = Gimp.Layer.new(image, name, width, height,
+                               Gimp.ImageType.RGBA_IMAGE, 100,
+                               Gimp.LayerMode.NORMAL)
+        pos = position if above else position + n
+        image.insert_layer(layer, insert_parent, pos)
+    image.undo_group_end()
+    Gimp.displays_flush()
+    return counter
+
+def create_group_from_selected(image, name, group_counter):
+    """Create a new group at the position of the topmost selected layer,
+    move all selected layers into it. Returns updated counter."""
+    selected = [d for d in image.get_selected_drawables() if isinstance(d, Gimp.Layer)]
+    if not selected:
+        return group_counter
+
+    # Find topmost selected layer by position in flat list
+    all_layers = get_all_layers(image)
+    id_set = {l.get_id() for l in selected}
+    top_layer = None
+    for l in all_layers:
+        if l.get_id() in id_set:
+            top_layer = l
+            break
+    if not top_layer:
+        return group_counter
+
+    group_name = f"{name} {group_counter}"
+    group_counter += 1
+
+    # Determine insertion parent and position from top_layer
+    parent = top_layer.get_parent() if hasattr(top_layer, 'get_parent') else None
+    insert_parent = parent if (parent and isinstance(parent, Gimp.GroupLayer)) else None
+    if insert_parent:
+        siblings = list(insert_parent.get_children())
+        try:
+            pos = next(i for i, c in enumerate(siblings) if c.get_id() == top_layer.get_id())
+        except StopIteration:
+            pos = 0
+    else:
+        top_level = image.get_layers()
+        try:
+            pos = next(i for i, l in enumerate(top_level) if l.get_id() == top_layer.get_id())
+        except StopIteration:
+            pos = 0
+
+    image.undo_group_start()
+    group = Gimp.GroupLayer.new(image, group_name)
+    image.insert_layer(group, insert_parent, pos)
+    # Move selected layers into the group in their original order
+    for layer in all_layers:
+        if layer.get_id() in id_set:
+            image.reorder_item(layer, group, -1)
+    image.undo_group_end()
+    Gimp.displays_flush()
+    return group_counter
+
 #------------------------------------------------------------------------------
 # Operation dispatch
 #------------------------------------------------------------------------------
@@ -362,6 +461,91 @@ def create_panel(drawables=None):
         grp_box.pack_start(make_btn(lbl, fn), True, True, 0)
     box.pack_start(grp_box, False, False, 0)
     box.pack_start(Gtk.Separator(), False, False, 2)
+
+    # Add Layers
+    layer_counter = [1]
+    group_counter = [1]
+
+    def on_add_layers(above):
+        image = get_image()
+        if not image:
+            return
+        active_drawables = image.get_selected_drawables() or drawables
+        active = get_active_layer(image, active_drawables)
+        count  = int(add_count_spin.get_value())
+        prefix = add_prefix_entry.get_text().strip() or 'new layer'
+        layer_counter[0] = add_layers(image, active, count, prefix, above, layer_counter[0])
+
+    def on_context_changed(image=None):
+        """Update Add buttons based on whether active is a group or layer."""
+        img = get_image()
+        if not img:
+            return
+        active_drawables = img.get_selected_drawables() or drawables
+        active = get_active_layer(img, active_drawables)
+        if active and is_group(active):
+            add_above_btn.hide()
+            add_below_btn.hide()
+            add_in_btn.show()
+            grp_row.hide()
+        else:
+            add_above_btn.show()
+            add_below_btn.show()
+            add_in_btn.hide()
+            grp_row.show()
+
+    def on_create_group(widget):
+        image = get_image()
+        if not image:
+            return
+        prefix = grp_prefix_entry.get_text().strip() or 'New Group'
+        group_counter[0] = create_group_from_selected(image, prefix, group_counter[0])
+
+    add_label = Gtk.Label(label='Add Layers:')
+    add_label.set_xalign(0)
+    box.pack_start(add_label, False, False, 0)
+
+    add_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+    add_prefix_entry = Gtk.Entry()
+    add_prefix_entry.set_text('new layer')
+    add_prefix_entry.set_tooltip_text('Layer name prefix')
+    add_prefix_entry.set_width_chars(12)
+    add_count_spin = Gtk.SpinButton()
+    add_count_spin.set_adjustment(Gtk.Adjustment(value=3, lower=1, upper=99, step_increment=1))
+    add_count_spin.set_width_chars(3)
+    add_above_btn = Gtk.Button(label='Above')
+    add_above_btn.connect('clicked', lambda w: on_add_layers(True))
+    add_below_btn = Gtk.Button(label='Below')
+    add_below_btn.connect('clicked', lambda w: on_add_layers(False))
+    add_in_btn = Gtk.Button(label='In Group')
+    add_in_btn.connect('clicked', lambda w: on_add_layers(True))  # above=True = top of group children
+    add_row.pack_start(add_prefix_entry, True,  True,  0)
+    add_row.pack_start(add_count_spin,   False, False, 0)
+    add_row.pack_start(add_above_btn,    False, False, 0)
+    add_row.pack_start(add_below_btn,    False, False, 0)
+    add_row.pack_start(add_in_btn,       False, False, 0)
+    box.pack_start(add_row, False, False, 0)
+
+    # Create Group row
+    grp_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+    grp_prefix_entry = Gtk.Entry()
+    grp_prefix_entry.set_text('New Group')
+    grp_prefix_entry.set_tooltip_text('Group name prefix')
+    grp_prefix_entry.set_width_chars(12)
+    grp_prefix_entry.connect('activate', on_create_group)
+    create_grp_btn = Gtk.Button(label='Create Group')
+    create_grp_btn.set_tooltip_text('Group selected layers into a new group')
+    create_grp_btn.connect('clicked', on_create_group)
+    grp_row.pack_start(grp_prefix_entry, True,  True,  0)
+    grp_row.pack_start(create_grp_btn,   False, False, 0)
+    box.pack_start(grp_row, False, False, 0)
+    box.pack_start(Gtk.Separator(), False, False, 2)
+
+    # Connect a timer to poll active layer type for button context switching
+    def poll_context():
+        on_context_changed()
+        return True  # keep repeating
+    GLib.timeout_add(500, poll_context)
 
     # Ignore
     ignore_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
