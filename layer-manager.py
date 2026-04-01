@@ -607,8 +607,7 @@ PROCEDURES = [
     ('layer-manager-expand-below',      '<Image>/Filters/Layer Manager/Groups/',     'Expand Below'),
     ('layer-manager-toggle-ignore',     '<Image>/Filters/Layer Manager/',            'Toggle Ignore on Active'),
     ('layer-manager-clear-ignores',     '<Image>/Filters/Layer Manager/',            'Clear All Ignores'),
-    ('layer-manager-dialog',            '<Image>/Filters/Layer Manager/',            'Open Panel...'),
-    ('layer-manager-open',              '<Layers>/[Layers]/',                        'Open Layer Manager'),
+    ('layer-manager-dialog',            '<Image>/Layer/',                            'Layer Manager...'),
 ]
 
 #------------------------------------------------------------------------------
@@ -642,7 +641,7 @@ class MapsEdgeLayerManager(Gimp.PlugIn):
     def run(self, procedure, run_mode, image, drawables, config, run_data):
         name = procedure.get_name()
         active_drawables = list(drawables) if drawables else []
-        if name in ('layer-manager-dialog', 'layer-manager-open'):
+        if name in ('layer-manager-dialog',):
             # Singleton: find existing dialog by role and present it
             for win in Gtk.Window.list_toplevels():
                 if win.get_role() == 'layer-manager' and win.get_visible():
