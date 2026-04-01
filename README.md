@@ -1,5 +1,5 @@
 # gimp-plugin-layermanager
-A simple dialog that puts common functions in a single interface for manipulating layers and layer groups.
+A simple dialog that puts common functions in a single interface for manipulating multiple layers and layer groups at once.
 
 Scope: All; Others; Above; Below; Selected
 
